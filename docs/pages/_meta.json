@@ -7,5 +7,8 @@
       "layout": "full"
     }
   },
-  "introduction": "Introduction"
+  "introduction": "Introduction",
+  "nomenclature": "Nomenclature",
+  "events": "Events",
+  "order-book-example": "Order book example"
 }
