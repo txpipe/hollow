@@ -8,7 +8,7 @@ publish = false
 
 [dependencies]
 balius-sdk = { path = "../../balius-sdk" }
-pallas-primitives = "0.32.0"
+pallas-primitives = "1.0.0"
 serde = { version = "1.0.204", features = ["derive"] }
 
 [lib]

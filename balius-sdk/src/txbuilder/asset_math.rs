@@ -1,7 +1,7 @@
 use pallas_crypto::hash::Hash;
 use pallas_primitives::{
     conway::{self, Value},
-    AssetName, NonEmptyKeyValuePairs, NonZeroInt, PolicyId, PositiveCoin,
+    AssetName, NonZeroInt, PolicyId, PositiveCoin,
 };
 use std::collections::{hash_map::Entry, BTreeMap, HashMap};
 
@@ -9,11 +9,11 @@ use super::BuildError;
 
 fn fold_assets<T>(
     acc: &mut HashMap<pallas_codec::utils::Bytes, T>,
-    item: NonEmptyKeyValuePairs<pallas_codec::utils::Bytes, T>,
+    item: BTreeMap<pallas_codec::utils::Bytes, T>,
 ) where
     T: SafeAdd + Copy,
 {
-    for (key, value) in item.to_vec() {
+    for (key, value) in item {
         match acc.entry(key) {
             Entry::Occupied(mut entry) => {
                 if let Some(new_val) = value.try_add(*entry.get()) {
@@ -31,11 +31,11 @@ fn fold_assets<T>(
 
 pub fn fold_multiassets<T>(
     acc: &mut HashMap<Hash<28>, HashMap<pallas_codec::utils::Bytes, T>>,
-    item: NonEmptyKeyValuePairs<Hash<28>, NonEmptyKeyValuePairs<pallas_codec::utils::Bytes, T>>,
+    item: conway::Multiasset<T>,
 ) where
     T: SafeAdd + Copy,
 {
-    for (key, value) in item.to_vec() {
+    for (key, value) in item {
         let mut map = acc.remove(&key).unwrap_or_default();
         fold_assets(&mut map, value);
         acc.insert(key, map);
@@ -54,15 +54,22 @@ where
         fold_multiassets(&mut total_assets, assets);
     }
 
-    let total_assets_vec = total_assets
+    let total_assets_vec: conway::Multiasset<T> = total_assets
         .into_iter()
         .filter_map(|(key, assets)| {
-            let assets_vec = assets.into_iter().collect();
-            Some((key, NonEmptyKeyValuePairs::from_vec(assets_vec)?))
+            if assets.is_empty() {
+                None
+            } else {
+                Some((key, assets.into_iter().collect()))
+            }
         })
         .collect();
 
-    NonEmptyKeyValuePairs::from_vec(total_assets_vec)
+    if total_assets_vec.is_empty() {
+        None
+    } else {
+        Some(total_assets_vec)
+    }
 }
 
 pub fn aggregate_values(items: impl IntoIterator<Item = Value>) -> Value {
@@ -89,43 +96,36 @@ pub fn aggregate_values(items: impl IntoIterator<Item = Value>) -> Value {
 }
 
 pub fn add_mint(value: &Value, mint: &conway::Mint) -> Result<Value, BuildError> {
-    let (coin, mut og_assets) = match value {
-        Value::Coin(c) => (*c, BTreeMap::new()),
-        Value::Multiasset(c, a) => {
-            let flattened: BTreeMap<&PolicyId, BTreeMap<&AssetName, u64>> = a
-                .iter()
-                .map(|(policy, assets)| {
-                    let values = assets
-                        .iter()
-                        .map(move |(name, value)| (name, value.into()))
-                        .collect();
-                    (policy, values)
-                })
-                .collect();
-            (*c, flattened)
-        }
-    };
-    let mut final_assets = vec![];
+    let (coin, mut final_assets): (u64, BTreeMap<PolicyId, BTreeMap<AssetName, PositiveCoin>>) =
+        match value {
+            Value::Coin(c) => (*c, BTreeMap::new()),
+            Value::Multiasset(c, a) => (*c, a.clone()),
+        };
+
     for (policy, mint_assets) in mint.iter() {
-        let assets = og_assets.remove(policy).unwrap_or_default();
-        let mut policy_assets = vec![];
+        let policy_assets = final_assets.entry(*policy).or_default();
         for (name, value) in mint_assets.iter() {
-            let old_value = assets.get(name).copied().unwrap_or_default();
+            let old_value = policy_assets
+                .get(name)
+                .copied()
+                .map(u64::from)
+                .unwrap_or_default();
             let minted: i64 = value.into();
             let Some(new_value) = old_value.checked_add_signed(minted) else {
                 return Err(BuildError::OutputsTooHigh);
             };
             if let Ok(asset) = PositiveCoin::try_from(new_value) {
-                policy_assets.push((name.clone(), asset));
+                policy_assets.insert(name.clone(), asset);
+            } else {
+                policy_assets.remove(name);
             }
-        }
-        if let Some(assets) = NonEmptyKeyValuePairs::from_vec(policy_assets) {
-            final_assets.push((*policy, assets));
         }
     }
 
-    if let Some(assets) = NonEmptyKeyValuePairs::from_vec(final_assets) {
-        Ok(Value::Multiasset(coin, assets))
+    final_assets.retain(|_, assets| !assets.is_empty());
+
+    if !final_assets.is_empty() {
+        Ok(Value::Multiasset(coin, final_assets))
     } else {
         Ok(Value::Coin(coin))
     }
@@ -169,8 +169,8 @@ pub fn subtract_value(lhs: &Value, rhs: &Value) -> Result<Value, BuildError> {
                 policy_assets.push((name.clone(), final_coin));
             }
         }
-        if let Some(assets) = NonEmptyKeyValuePairs::from_vec(policy_assets) {
-            final_assets.push((*policy, assets));
+        if !policy_assets.is_empty() {
+            final_assets.push((*policy, policy_assets.into_iter().collect()));
         }
     }
 
@@ -179,8 +179,11 @@ pub fn subtract_value(lhs: &Value, rhs: &Value) -> Result<Value, BuildError> {
         return Err(BuildError::OutputsTooHigh);
     }
 
-    if let Some(assets) = NonEmptyKeyValuePairs::from_vec(final_assets) {
-        Ok(Value::Multiasset(final_coin, assets))
+    if !final_assets.is_empty() {
+        Ok(Value::Multiasset(
+            final_coin,
+            final_assets.into_iter().collect(),
+        ))
     } else {
         Ok(Value::Coin(final_coin))
     }
@@ -211,11 +214,11 @@ where
             let quantity: NonZeroInt = f(quantity as i64).unwrap();
             new_asset.push((name, quantity));
         }
-        let asset = NonEmptyKeyValuePairs::from_vec(new_asset).unwrap();
+        let asset = new_asset.into_iter().collect();
         new_assets.push((policy, asset));
     }
 
-    Ok(NonEmptyKeyValuePairs::from_vec(new_assets).unwrap())
+    Ok(new_assets.into_iter().collect())
 }
 
 pub fn multiasset_coin_to_mint(
@@ -284,23 +287,25 @@ mod tests {
 
         let value_a = Value::Multiasset(
             100,
-            NonEmptyKeyValuePairs::Def(vec![(
+            [(
                 policy_id,
-                NonEmptyKeyValuePairs::Def(vec![(
-                    asset_name.clone().into(),
-                    50.try_into().unwrap(),
-                )]),
-            )]),
+                [(asset_name.clone().into(), 50.try_into().unwrap())]
+                    .into_iter()
+                    .collect(),
+            )]
+            .into_iter()
+            .collect(),
         );
         let value_b = Value::Multiasset(
             200,
-            NonEmptyKeyValuePairs::Def(vec![(
+            [(
                 policy_id,
-                NonEmptyKeyValuePairs::Def(vec![(
-                    asset_name.clone().into(),
-                    30.try_into().unwrap(),
-                )]),
-            )]),
+                [(asset_name.clone().into(), 30.try_into().unwrap())]
+                    .into_iter()
+                    .collect(),
+            )]
+            .into_iter()
+            .collect(),
         );
 
         let result = aggregate_values(vec![value_a, value_b]);
@@ -309,13 +314,14 @@ mod tests {
             result,
             Value::Multiasset(
                 300,
-                NonEmptyKeyValuePairs::Def(vec![(
+                [(
                     policy_id,
-                    NonEmptyKeyValuePairs::Def(vec![(
-                        asset_name.clone().into(),
-                        80.try_into().unwrap()
-                    )]),
-                )]),
+                    [(asset_name.clone().into(), 80.try_into().unwrap())]
+                        .into_iter()
+                        .collect()
+                )]
+                .into_iter()
+                .collect(),
             )
         );
     }

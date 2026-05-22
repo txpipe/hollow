@@ -1,4 +1,4 @@
-use pallas_primitives::conway;
+use pallas_primitives::{conway, MaybeIndefArray};
 use pallas_traverse::MultiEraOutput;
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
@@ -13,6 +13,7 @@ pub type Bytes = pallas_codec::utils::Bytes;
 pub type KeyValuePairs<K, V> = pallas_codec::utils::KeyValuePairs<K, V>;
 pub type NonEmptyKeyValuePairs<K, V> = pallas_codec::utils::NonEmptyKeyValuePairs<K, V>;
 pub type NonEmptySet<T> = pallas_codec::utils::NonEmptySet<T>;
+pub type KeepRaw<'b, T> = pallas_codec::utils::KeepRaw<'b, T>;
 
 pub type Cbor = Vec<u8>;
 
@@ -343,7 +344,7 @@ impl ValueExpr for MinUtxoLovelace {
         let coins_per_utxo_byte = ctx.pparams.coins_per_utxo_byte;
         let min_lovelace = (160u64 + serialized.len() as u64) * coins_per_utxo_byte;
         let current_value = match parent {
-            conway::PseudoTransactionOutput::PostAlonzo(x) => &x.value,
+            conway::TransactionOutput::PostAlonzo(x) => &x.value,
             _ => unimplemented!(),
         };
 
@@ -426,7 +427,10 @@ where
 }
 
 pub trait OutputExpr: 'static + Send + Sync {
-    fn eval(&mut self, ctx: &BuildContext) -> Result<conway::TransactionOutput, BuildError>;
+    fn eval(
+        &mut self,
+        ctx: &BuildContext,
+    ) -> Result<conway::TransactionOutput<'static>, BuildError>;
 }
 
 pub struct ChangeAddress(pub UtxoSource);
@@ -467,7 +471,10 @@ impl ValueExpr for TotalChange {
 pub struct FeeChangeReturn(pub UtxoSource);
 
 impl OutputExpr for FeeChangeReturn {
-    fn eval(&mut self, ctx: &BuildContext) -> Result<conway::TransactionOutput, BuildError> {
+    fn eval(
+        &mut self,
+        ctx: &BuildContext,
+    ) -> Result<conway::TransactionOutput<'static>, BuildError> {
         OutputBuilder::new()
             .address(ChangeAddress(self.0.clone()))
             .with_value(TotalChange)
@@ -505,7 +512,7 @@ impl PlutusDataExpr for () {
         Ok(conway::PlutusData::Constr(conway::Constr {
             tag: 121,
             any_constructor: None,
-            fields: conway::MaybeIndefArray::Def(vec![]),
+            fields: MaybeIndefArray::Def(vec![]),
         }))
     }
 }
@@ -559,15 +566,18 @@ impl MintExpr for MintBuilder {
             Result::<_, BuildError>::Ok(acc)
         })?;
 
-        let mint: Vec<_> = out
+        let mint = out
             .into_iter()
             .filter_map(|(policy, assets)| {
-                let assets = assets.into_iter().collect();
-                Some((policy, NonEmptyKeyValuePairs::from_vec(assets)?))
+                if assets.is_empty() {
+                    None
+                } else {
+                    Some((policy, assets.into_iter().collect()))
+                }
             })
             .collect();
 
-        Ok(NonEmptyKeyValuePairs::from_vec(mint))
+        Ok(Some(mint))
     }
 
     fn eval_redeemer(&self, ctx: &BuildContext) -> Result<Option<conway::Redeemer>, BuildError> {
@@ -603,24 +613,24 @@ impl MintExpr for MintBuilder {
 }
 
 pub trait ScriptExpr: 'static + Send + Sync {
-    fn eval(&self, ctx: &BuildContext) -> Result<conway::ScriptRef, BuildError>;
+    fn eval(&self, ctx: &BuildContext) -> Result<conway::ScriptRef<'static>, BuildError>;
 }
 
-impl ScriptExpr for conway::ScriptRef {
-    fn eval(&self, _ctx: &BuildContext) -> Result<conway::ScriptRef, BuildError> {
+impl ScriptExpr for conway::ScriptRef<'static> {
+    fn eval(&self, _ctx: &BuildContext) -> Result<conway::ScriptRef<'static>, BuildError> {
         Ok(self.clone())
     }
 }
 
 impl ScriptExpr for conway::PlutusScript<3> {
-    fn eval(&self, _ctx: &BuildContext) -> Result<conway::ScriptRef, BuildError> {
+    fn eval(&self, _ctx: &BuildContext) -> Result<conway::ScriptRef<'static>, BuildError> {
         Ok(conway::ScriptRef::PlutusV3Script(self.clone()))
     }
 }
 
 #[derive(Default)]
 pub struct OutputBuilder {
-    pub previous: Option<conway::TransactionOutput>,
+    pub previous: Option<conway::TransactionOutput<'static>>,
     pub address: Option<Box<dyn dsl::AddressExpr>>,
     pub values: Vec<Box<dyn dsl::ValueExpr>>,
     pub script: Option<Box<dyn ScriptExpr>>,
@@ -649,7 +659,10 @@ impl OutputBuilder {
 }
 
 impl OutputExpr for OutputBuilder {
-    fn eval(&mut self, ctx: &BuildContext) -> Result<conway::TransactionOutput, BuildError> {
+    fn eval(
+        &mut self,
+        ctx: &BuildContext,
+    ) -> Result<conway::TransactionOutput<'static>, BuildError> {
         let ctx = match &self.previous {
             Some(x) => &ctx.with_parent_output(x.clone()),
             None => ctx,
@@ -666,12 +679,15 @@ impl OutputExpr for OutputBuilder {
             .transpose()?
             .map(pallas_codec::utils::CborWrap);
 
-        let output = conway::TransactionOutput::PostAlonzo(conway::PostAlonzoTransactionOutput {
-            value,
-            address,
-            script_ref,
-            datum_option: None, // TODO
-        });
+        let output = conway::TransactionOutput::PostAlonzo(
+            conway::PostAlonzoTransactionOutput {
+                value,
+                address,
+                script_ref,
+                datum_option: None, // TODO
+            }
+            .into(),
+        );
 
         self.previous = Some(output.clone());
 
@@ -680,26 +696,44 @@ impl OutputExpr for OutputBuilder {
 }
 
 pub trait TxExpr: 'static + Send + Sync {
-    fn eval_body(&mut self, ctx: &BuildContext) -> Result<conway::TransactionBody, BuildError>;
-    fn eval_witness_set(&mut self, ctx: &BuildContext) -> Result<conway::WitnessSet, BuildError>;
+    fn eval_body(
+        &mut self,
+        ctx: &BuildContext,
+    ) -> Result<conway::TransactionBody<'static>, BuildError>;
+    fn eval_witness_set(
+        &mut self,
+        ctx: &BuildContext,
+    ) -> Result<conway::WitnessSet<'static>, BuildError>;
 }
 
 impl<T: TxExpr> TxExpr for &'static mut T {
-    fn eval_body(&mut self, ctx: &BuildContext) -> Result<conway::TransactionBody, BuildError> {
+    fn eval_body(
+        &mut self,
+        ctx: &BuildContext,
+    ) -> Result<conway::TransactionBody<'static>, BuildError> {
         (**self).eval_body(ctx)
     }
 
-    fn eval_witness_set(&mut self, ctx: &BuildContext) -> Result<conway::WitnessSet, BuildError> {
+    fn eval_witness_set(
+        &mut self,
+        ctx: &BuildContext,
+    ) -> Result<conway::WitnessSet<'static>, BuildError> {
         (**self).eval_witness_set(ctx)
     }
 }
 
 impl TxExpr for Box<dyn TxExpr> {
-    fn eval_body(&mut self, ctx: &BuildContext) -> Result<conway::TransactionBody, BuildError> {
+    fn eval_body(
+        &mut self,
+        ctx: &BuildContext,
+    ) -> Result<conway::TransactionBody<'static>, BuildError> {
         (**self).eval_body(ctx)
     }
 
-    fn eval_witness_set(&mut self, ctx: &BuildContext) -> Result<conway::WitnessSet, BuildError> {
+    fn eval_witness_set(
+        &mut self,
+        ctx: &BuildContext,
+    ) -> Result<conway::WitnessSet<'static>, BuildError> {
         (**self).eval_witness_set(ctx)
     }
 }
@@ -763,7 +797,10 @@ impl TxBuilder {
 }
 
 impl TxExpr for TxBuilder {
-    fn eval_body(&mut self, ctx: &BuildContext) -> Result<conway::TransactionBody, BuildError> {
+    fn eval_body(
+        &mut self,
+        ctx: &BuildContext,
+    ) -> Result<conway::TransactionBody<'static>, BuildError> {
         let out = conway::TransactionBody {
             inputs: self
                 .inputs
@@ -812,7 +849,11 @@ impl TxExpr for TxBuilder {
                     .flatten()
                     .collect();
 
-                NonEmptySet::from_vec(refs)
+                if refs.is_empty() {
+                    None
+                } else {
+                    NonEmptySet::from_vec(refs)
+                }
             },
             voting_procedures: None,
             proposal_procedures: None,
@@ -823,7 +864,10 @@ impl TxExpr for TxBuilder {
         Ok(out)
     }
 
-    fn eval_witness_set(&mut self, ctx: &BuildContext) -> Result<conway::WitnessSet, BuildError> {
+    fn eval_witness_set(
+        &mut self,
+        ctx: &BuildContext,
+    ) -> Result<conway::WitnessSet<'static>, BuildError> {
         let out = conway::WitnessSet {
             redeemer: {
                 let redeemers: Vec<_> = self
@@ -838,9 +882,7 @@ impl TxExpr for TxBuilder {
                 if redeemers.is_empty() {
                     None
                 } else {
-                    Some(conway::Redeemers::List(conway::MaybeIndefArray::Def(
-                        redeemers,
-                    )))
+                    Some(conway::Redeemers::List(redeemers).into())
                 }
             },
             vkeywitness: None,
@@ -878,10 +920,10 @@ macro_rules! define_asset_class {
                 let Ok(amount) = self.1.try_into() else {
                     return Ok($crate::txbuilder::Value::Coin(0));
                 };
-                let asset = $crate::txbuilder::NonEmptyKeyValuePairs::Def(vec![(name, amount)]);
+                let asset = [(name, amount)].into_iter().collect();
                 let val = $crate::txbuilder::Value::Multiasset(
                     0,
-                    $crate::txbuilder::NonEmptyKeyValuePairs::Def(vec![(policy, asset)]),
+                    [(policy, asset)].into_iter().collect(),
                 );
 
                 Ok(val)
