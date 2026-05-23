@@ -566,7 +566,7 @@ impl MintExpr for MintBuilder {
             Result::<_, BuildError>::Ok(acc)
         })?;
 
-        let mint = out
+        let mint: conway::Mint = out
             .into_iter()
             .filter_map(|(policy, assets)| {
                 if assets.is_empty() {
@@ -577,7 +577,11 @@ impl MintExpr for MintBuilder {
             })
             .collect();
 
-        Ok(Some(mint))
+        if mint.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(mint))
+        }
     }
 
     fn eval_redeemer(&self, ctx: &BuildContext) -> Result<Option<conway::Redeemer>, BuildError> {
