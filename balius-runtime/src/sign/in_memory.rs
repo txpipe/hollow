@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use pallas::crypto::key::ed25519;
-use rand::rngs::OsRng;
+use rand::TryRng as _;
 
 use crate::wit::balius::app::sign as wit;
 
@@ -31,9 +31,13 @@ impl SignerProvider for Signer {
             panic!("Unsupported algorithm")
         }
         let keys = self.map.entry(worker_id.to_string()).or_default();
-        let secret_key = keys
-            .entry(key_name)
-            .or_insert(ed25519::SecretKey::new(OsRng).into());
+        let secret_key = keys.entry(key_name).or_insert_with(|| {
+            let mut bytes = [0; ed25519::SecretKey::SIZE];
+            rand::rngs::SysRng
+                .try_fill_bytes(&mut bytes)
+                .expect("system RNG failed while generating ed25519 key");
+            ed25519::SecretKey::from(bytes).into()
+        });
         secret_key.public_key()
     }
 

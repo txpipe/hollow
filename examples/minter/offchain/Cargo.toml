@@ -15,9 +15,9 @@ crate-type = ["cdylib"]
 [dev-dependencies]
 hex = "0.4.3"
 serde_json = "1.0.128"
-pallas-traverse = "0.32.0"
-pallas-codec = "0.32.0"
-pallas-primitives = "0.32.0"
+pallas-traverse = "1.0.0"
+pallas-codec = "1.0.0"
+pallas-primitives = "1.0.0"
 
 [package.metadata.release]
 release = false

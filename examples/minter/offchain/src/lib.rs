@@ -63,12 +63,12 @@ mod tests {
 
     #[test]
     fn test_free_mint() {
-        let output = primitives::MintedTransactionOutput::PostAlonzo(primitives::MintedPostAlonzoTransactionOutput {
+        let output = primitives::TransactionOutput::PostAlonzo(primitives::PostAlonzoTransactionOutput {
             address: Address::from_bech32("addr1qx2fxv2umyhttkxyxp8x0dlpdt3k6cwng5pxj3jhsydzer3n0d3vllmyqwsx5wktcd8cc3sq835lu7drv2xwl2wywfgse35a3x").unwrap().to_vec().into(),
             value: primitives::Value::Coin(5_000_000),
             datum_option: None,
             script_ref: None,
-        });
+        }.into());
 
         let cbor = pallas_codec::minicbor::to_vec(&output).unwrap();
 

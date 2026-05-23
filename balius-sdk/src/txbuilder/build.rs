@@ -1,6 +1,6 @@
-use pallas_traverse::MultiEraValue;
+use pallas_codec::utils::KeepRaw;
+use std::collections::HashMap;
 use std::sync::Arc;
-use std::{collections::HashMap, ops::Deref as _};
 
 use super::{
     asset_math, primitives, BuildContext, BuildError, Ledger, PParams, TxExpr, TxoRef, UtxoPattern,
@@ -83,7 +83,7 @@ impl crate::txbuilder::Ledger for ExtLedgerFacade {
     }
 }
 
-pub fn build<T, L>(mut tx: T, ledger: L) -> Result<primitives::Tx, BuildError>
+pub fn build<T, L>(mut tx: T, ledger: L) -> Result<primitives::Tx<'static>, BuildError>
 where
     T: TxExpr,
     L: Ledger + 'static,
@@ -113,7 +113,7 @@ where
         .collect();
     let utxos = ctx.ledger.read_utxos(&input_refs)?;
     ctx.total_input =
-        asset_math::aggregate_values(utxos.txos().map(|txo| input_into_conway(&txo.value())));
+        asset_math::aggregate_values(utxos.txos().map(|txo| txo.value().into_conway()));
     if let Some(mint) = &body.mint {
         ctx.total_input = asset_math::add_mint(&ctx.total_input, mint)?;
     }
@@ -132,8 +132,8 @@ where
     let wit = tx.eval_witness_set(&ctx).unwrap();
 
     let tx = primitives::Tx {
-        transaction_body: ctx.tx_body.take().unwrap(),
-        transaction_witness_set: wit,
+        transaction_body: KeepRaw::from(ctx.tx_body.take().unwrap()),
+        transaction_witness_set: KeepRaw::from(wit),
         auxiliary_data: pallas_codec::utils::Nullable::Null,
         success: true,
     };
@@ -141,55 +141,27 @@ where
     Ok(tx)
 }
 
-// TODO: this belongs in pallas-traverse
-// https://github.com/txpipe/pallas/pull/545
-fn input_into_conway(value: &MultiEraValue) -> primitives::Value {
-    use pallas_primitives::{alonzo, conway};
-    match value {
-        MultiEraValue::Byron(x) => conway::Value::Coin(*x),
-        MultiEraValue::AlonzoCompatible(x) => match x.deref() {
-            alonzo::Value::Coin(x) => conway::Value::Coin(*x),
-            alonzo::Value::Multiasset(x, assets) => {
-                let coin = *x;
-                let assets = assets
-                    .iter()
-                    .filter_map(|(k, v)| {
-                        let v: Vec<(conway::Bytes, conway::PositiveCoin)> = v
-                            .iter()
-                            .filter_map(|(k, v)| Some((k.clone(), (*v).try_into().ok()?)))
-                            .collect();
-                        Some((*k, conway::NonEmptyKeyValuePairs::from_vec(v)?))
-                    })
-                    .collect();
-                if let Some(assets) = conway::NonEmptyKeyValuePairs::from_vec(assets) {
-                    conway::Value::Multiasset(coin, assets)
-                } else {
-                    conway::Value::Coin(coin)
-                }
-            }
-        },
-        MultiEraValue::Conway(x) => x.deref().clone(),
-        _ => panic!("unrecognized value"),
-    }
-}
-
-fn output_into_conway(output: &primitives::TransactionOutput) -> primitives::Value {
+fn output_into_conway(output: &primitives::TransactionOutput<'_>) -> primitives::Value {
     use pallas_primitives::{alonzo, conway};
     match output {
         primitives::TransactionOutput::Legacy(o) => match &o.amount {
             alonzo::Value::Coin(c) => primitives::Value::Coin(*c),
             alonzo::Value::Multiasset(c, assets) => {
-                let assets = assets
+                let assets: conway::Multiasset<conway::PositiveCoin> = assets
                     .iter()
                     .filter_map(|(k, v)| {
                         let v: Vec<(conway::Bytes, conway::PositiveCoin)> = v
                             .iter()
                             .filter_map(|(k, v)| Some((k.clone(), (*v).try_into().ok()?)))
                             .collect();
-                        Some((*k, conway::NonEmptyKeyValuePairs::from_vec(v)?))
+                        if v.is_empty() {
+                            None
+                        } else {
+                            Some((*k, v.into_iter().collect()))
+                        }
                     })
                     .collect();
-                if let Some(assets) = conway::NonEmptyKeyValuePairs::from_vec(assets) {
+                if !assets.is_empty() {
                     primitives::Value::Multiasset(*c, assets)
                 } else {
                     primitives::Value::Coin(*c)

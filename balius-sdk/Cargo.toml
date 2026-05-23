@@ -12,11 +12,11 @@ readme = "README.md"
 balius-core = { version = "0.5.2", path = "../balius-core" }
 balius-macros = { version = "0.5.2", path = "../balius-macros" }
 hex = "0.4.3"
-pallas-addresses = { version = "0.32.0" }
-pallas-codec = { version = "0.32.0" }
-pallas-crypto = { version = "0.32.0" }
-pallas-primitives = { version = "0.32.0" }
-pallas-traverse = { version = "0.32.0" }
+pallas-addresses = { version = "1.0.0" }
+pallas-codec = { version = "1.0.0" }
+pallas-crypto = { version = "1.0.0" }
+pallas-primitives = { version = "1.0.0" }
+pallas-traverse = { version = "1.0.0" }
 prost = "0.13.3"
 serde = { version = "1.0.210", features = ["derive"] }
 serde_json = "1.0.128"

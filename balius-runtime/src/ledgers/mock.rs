@@ -8,12 +8,12 @@ impl Ledger {
         &mut self,
         _refs: Vec<wit::TxoRef>,
     ) -> Result<Vec<wit::Utxo>, wit::LedgerError> {
-        let output = pallas::ledger::primitives::babbage::MintedTransactionOutput::PostAlonzo(pallas::ledger::primitives::babbage::MintedPostAlonzoTransactionOutput {
+        let output = pallas::ledger::primitives::babbage::TransactionOutput::PostAlonzo(pallas::ledger::primitives::babbage::PostAlonzoTransactionOutput {
             address: pallas::ledger::addresses::Address::from_bech32("addr1qx2fxv2umyhttkxyxp8x0dlpdt3k6cwng5pxj3jhsydzer3n0d3vllmyqwsx5wktcd8cc3sq835lu7drv2xwl2wywfgse35a3x").unwrap().to_vec().into(),
             value: pallas::ledger::primitives::babbage::Value::Coin(5_000_000),
             datum_option: None,
             script_ref: None,
-        });
+        }.into());
 
         let cbor = pallas::codec::minicbor::to_vec(&output).unwrap();
 

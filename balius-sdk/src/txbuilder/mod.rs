@@ -75,12 +75,12 @@ pub struct BuildContext {
     pub estimated_fee: u64,
     pub ledger: Arc<Box<dyn Ledger>>,
 
-    pub tx_body: Option<primitives::TransactionBody>,
-    pub parent_output: Option<primitives::TransactionOutput>,
+    pub tx_body: Option<primitives::TransactionBody<'static>>,
+    pub parent_output: Option<primitives::TransactionOutput<'static>>,
 }
 
 impl BuildContext {
-    pub fn with_parent_output(&self, output: primitives::TransactionOutput) -> Self {
+    pub fn with_parent_output(&self, output: primitives::TransactionOutput<'static>) -> Self {
         let mut ctx = self.clone();
         ctx.parent_output = Some(output);
         ctx
