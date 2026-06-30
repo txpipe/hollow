@@ -16,8 +16,12 @@ use wasmtime::component::HasSelf;
 pub mod wit {
     wasmtime::component::bindgen!({
         path: "./wit",
-        async: true,
-        tracing: true,
+        imports: {
+            default: async | tracing,
+        },
+        exports: {
+            default: async | tracing,
+        },
     });
 }
 
