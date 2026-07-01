@@ -10,7 +10,7 @@ repository = "https://github.com/txpipe/balius"
 [dependencies]
 chrono = "0.4.41"
 thiserror = "2.0.11"
-wasmtime = { version = "34.0.2" }
+wasmtime = { version = "36" }
 warp = { version = "0.3.7" }
 flate2 = "1.0.33"
 tar = "0.4.41"
